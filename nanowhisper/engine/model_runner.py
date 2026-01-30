@@ -225,6 +225,61 @@ class ModelRunner:
         temperatures = torch.tensor(temperatures, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)
         return temperatures
 
+    def _get_timestamp_params(self):
+        no_timestamps_token_id = getattr(self.config.hf_config, "no_timestamps_token_id", None)
+        if no_timestamps_token_id is None:
+            no_timestamps_token_id = 50363
+        timestamp_begin = no_timestamps_token_id + 1
+        max_initial_timestamp_index = getattr(self.config.hf_config, "max_initial_timestamp_index", 1)
+        eos_token_id = self.config.eos if self.config.eos != -1 else getattr(self.config.hf_config, "eos_token_id", 50257)
+        return no_timestamps_token_id, timestamp_begin, max_initial_timestamp_index, eos_token_id
+
+    def apply_timestamp_processor(self, seqs: list[Sequence], scores: torch.Tensor) -> torch.Tensor:
+        no_timestamps_token_id, timestamp_begin, max_initial_timestamp_index, eos_token_id = self._get_timestamp_params()
+        for k, seq in enumerate(seqs):
+            # Always suppress the <|notimestamps|> token during generation
+            scores[k, no_timestamps_token_id] = -float("inf")
+            if not getattr(seq, "return_timestamps", False):
+                scores[k, timestamp_begin:] = -float("inf")
+                continue
+
+            input_ids = torch.tensor(seq.token_ids, device=scores.device, dtype=torch.long)
+            begin_index = seq.num_prompt_tokens
+            sampled_tokens = input_ids[begin_index:]
+
+            last_was_timestamp = sampled_tokens.numel() >= 1 and sampled_tokens[-1] >= timestamp_begin
+            penultimate_was_timestamp = sampled_tokens.numel() < 2 or sampled_tokens[-2] >= timestamp_begin
+
+            if last_was_timestamp:
+                if penultimate_was_timestamp:  # has to be non-timestamp
+                    scores[k, timestamp_begin:] = -float("inf")
+                else:  # cannot be normal text tokens
+                    scores[k, : eos_token_id] = -float("inf")
+
+            timestamps = sampled_tokens[sampled_tokens >= timestamp_begin]
+            if timestamps.numel() > 0:
+                if last_was_timestamp and not penultimate_was_timestamp:
+                    timestamp_last = timestamps[-1]
+                else:
+                    # Avoid to emit <|0.00|> again
+                    timestamp_last = timestamps[-1] + 1
+                scores[k, timestamp_begin: timestamp_last] = -float("inf")
+
+            # apply the max_initial_timestamp option
+            if input_ids.numel() == begin_index:
+                scores[k, : timestamp_begin] = -float("inf")
+                if max_initial_timestamp_index is not None:
+                    last_allowed = timestamp_begin + max_initial_timestamp_index
+                    scores[k, last_allowed + 1 :] = -float("inf")
+
+            # if sum of probability over timestamps is above any other token, sample timestamp
+            logprobs = torch.log_softmax(scores[k].float(), dim=-1)
+            timestamp_logprob = logprobs[timestamp_begin:].logsumexp(dim=-1)
+            max_text_token_logprob = logprobs[:timestamp_begin].max()
+            if timestamp_logprob > max_text_token_logprob:
+                scores[k, : timestamp_begin] = -float("inf")
+        return scores
+
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool, input_tensors: torch.Tensor | None):
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
@@ -255,7 +310,11 @@ class ModelRunner:
         temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
         logits = self.run_model(input_ids, positions, is_prefill, input_tensors)
         # pr.disable()
-        token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
+        if self.rank == 0:
+            logits = self.apply_timestamp_processor(seqs, logits)
+            token_ids = self.sampler(logits, temperatures).tolist()
+        else:
+            token_ids = None
         reset_context()
         return token_ids
 

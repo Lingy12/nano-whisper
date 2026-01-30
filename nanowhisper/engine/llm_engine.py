@@ -32,6 +32,7 @@ class LLMEngine:
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config.eos = self.tokenizer.eos_token_id
         self.scheduler = Scheduler(config)
+        self._seq_params = {}
         atexit.register(self.exit)
 
     def exit(self):
@@ -42,8 +43,21 @@ class LLMEngine:
 
     def add_request(self, prompt: dict[str, list[int] | dict[str, torch.Tensor]], sampling_params: SamplingParams):
         if isinstance(prompt["prompt"], str):
+            if sampling_params.return_timestamps:
+                prompt["prompt"] = prompt["prompt"].replace("<|notimestamps|>", "")
             prompt["prompt"] = self.tokenizer.encode(prompt["prompt"], add_special_tokens = False)
+        else:
+            if sampling_params.return_timestamps:
+                no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", None)
+                if no_timestamps_token_id is None:
+                    try:
+                        no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
+                    except Exception:
+                        no_timestamps_token_id = None
+                if no_timestamps_token_id is not None:
+                    prompt["prompt"] = [t for t in prompt["prompt"] if t != no_timestamps_token_id]
         seq = Sequence(prompt.get("prompt", None), sampling_params, input_tensors = prompt.get("multi_modal_data", None))
+        self._seq_params[seq.seq_id] = sampling_params
         self.scheduler.add(seq)
 
     def step(self):
@@ -56,6 +70,35 @@ class LLMEngine:
 
     def is_finished(self):
         return self.scheduler.is_finished()
+
+    def _get_timestamp_begin(self):
+        no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", None)
+        if no_timestamps_token_id is None:
+            try:
+                no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
+            except Exception:
+                no_timestamps_token_id = 50363
+        return no_timestamps_token_id + 1
+
+    def _build_segments(self, token_ids: list[int]):
+        timestamp_begin = self._get_timestamp_begin()
+        time_precision = getattr(self.tokenizer, "time_precision", 0.02)
+        segments = []
+        current_start = None
+        current_tokens = []
+        for token_id in token_ids:
+            if token_id >= timestamp_begin:
+                t = (token_id - timestamp_begin) * time_precision
+                if current_start is None:
+                    current_start = t
+                else:
+                    text = self.tokenizer.decode(current_tokens, skip_special_tokens=True)
+                    segments.append({"start": float(current_start), "end": float(t), "text": text})
+                    current_start = t
+                    current_tokens = []
+            else:
+                current_tokens.append(token_id)
+        return segments
 
     def generate(
         self,
@@ -87,9 +130,17 @@ class LLMEngine:
                 outputs[seq_id] = token_ids
                 if use_tqdm:
                     pbar.update(1)
-        outputs = [outputs[seq_id] for seq_id in sorted(outputs)]
-        outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
+        ordered_seq_ids = sorted(outputs)
+        outputs = [outputs[seq_id] for seq_id in ordered_seq_ids]
+        decoded = []
+        for seq_id, token_ids in zip(ordered_seq_ids, outputs):
+            result = {"text": self.tokenizer.decode(token_ids), "token_ids": token_ids}
+            sp = self._seq_params.pop(seq_id, None)
+            if sp and sp.return_timestamps:
+                segments = self._build_segments(token_ids)
+                result["segments"] = segments
+            decoded.append(result)
         if use_tqdm:
             pbar.close()
-        return outputs
+        return decoded
 

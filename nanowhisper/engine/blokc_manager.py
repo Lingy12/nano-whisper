@@ -55,10 +55,13 @@ class BlockManager:
         self.free_block_ids.append(block_id)
 
     def can_allocate(self, seq: Sequence) -> bool:
-        return len(self.free_block_ids) >= seq.num_blocks
+        required = seq.num_blocks + seq.num_cross_blocks
+        return len(self.free_block_ids) >= required
 
     def allocate(self, seq: Sequence):
         assert not seq.block_table
+        required = seq.num_blocks + seq.num_cross_blocks
+        assert len(self.free_block_ids) >= required
         for i in range(seq.num_blocks):
             block_id = self.free_block_ids[0]
             block = self._allocate_block(block_id)
