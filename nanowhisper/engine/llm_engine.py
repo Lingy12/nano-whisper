@@ -31,6 +31,12 @@ class LLMEngine:
         self.model_runner = ModelRunner(config, 0, self.events)
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config.eos = self.tokenizer.eos_token_id
+        try:
+            config.no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
+        except Exception:
+            config.no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", 50363)
+        config.timestamp_begin = config.no_timestamps_token_id + 1
+        config.time_precision = getattr(self.tokenizer, "time_precision", 0.02)
         self.scheduler = Scheduler(config)
         self._seq_params = {}
         atexit.register(self.exit)
@@ -77,7 +83,7 @@ class LLMEngine:
             try:
                 no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
             except Exception:
-                no_timestamps_token_id = 50363
+                no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", 50363)
         return no_timestamps_token_id + 1
 
     def _build_segments(self, token_ids: list[int]):
