@@ -243,12 +243,12 @@ class ModelRunner:
                 scores[k, timestamp_begin:] = -float("inf")
                 continue
 
-            input_ids = torch.tensor(seq.token_ids, device=scores.device, dtype=torch.long)
             begin_index = seq.num_prompt_tokens
-            sampled_tokens = input_ids[begin_index:]
+            sampled_tokens = seq.token_ids[begin_index:]
+            num_sampled = len(sampled_tokens)
 
-            last_was_timestamp = sampled_tokens.numel() >= 1 and sampled_tokens[-1] >= timestamp_begin
-            penultimate_was_timestamp = sampled_tokens.numel() < 2 or sampled_tokens[-2] >= timestamp_begin
+            last_was_timestamp = num_sampled >= 1 and sampled_tokens[-1] >= timestamp_begin
+            penultimate_was_timestamp = num_sampled < 2 or sampled_tokens[-2] >= timestamp_begin
 
             if last_was_timestamp:
                 if penultimate_was_timestamp:  # has to be non-timestamp
@@ -256,8 +256,8 @@ class ModelRunner:
                 else:  # cannot be normal text tokens
                     scores[k, : eos_token_id] = -float("inf")
 
-            timestamps = sampled_tokens[sampled_tokens >= timestamp_begin]
-            if timestamps.numel() > 0:
+            timestamps = [t for t in sampled_tokens if t >= timestamp_begin]
+            if timestamps:
                 if last_was_timestamp and not penultimate_was_timestamp:
                     timestamp_last = timestamps[-1]
                 else:
@@ -266,17 +266,16 @@ class ModelRunner:
                 scores[k, timestamp_begin: timestamp_last] = -float("inf")
 
             # apply the max_initial_timestamp option
-            if input_ids.numel() == begin_index:
+            if len(seq.token_ids) == begin_index:
                 scores[k, : timestamp_begin] = -float("inf")
                 if max_initial_timestamp_index is not None:
                     last_allowed = timestamp_begin + max_initial_timestamp_index
                     scores[k, last_allowed + 1 :] = -float("inf")
 
             # if sum of probability over timestamps is above any other token, sample timestamp
-            logprobs = torch.log_softmax(scores[k].float(), dim=-1)
-            timestamp_logprob = logprobs[timestamp_begin:].logsumexp(dim=-1)
-            max_text_token_logprob = logprobs[:timestamp_begin].max()
-            if timestamp_logprob > max_text_token_logprob:
+            timestamp_logit_sum = scores[k, timestamp_begin:].logsumexp(dim=-1)
+            max_text_token_logit = scores[k, :timestamp_begin].max()
+            if timestamp_logit_sum > max_text_token_logit:
                 scores[k, : timestamp_begin] = -float("inf")
         return scores
 
