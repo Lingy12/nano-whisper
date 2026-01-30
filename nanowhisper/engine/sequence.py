@@ -16,7 +16,7 @@ class Sequence:
     block_size = 256
     counter = count()
 
-    def __init__(self, token_ids: list[int], sampling_params = SamplingParams(), input_tensors = torch.Tensor(), timestamp_begin: int | None = None):
+    def __init__(self, token_ids: list[int], sampling_params = SamplingParams(), input_tensors = torch.Tensor()):
         self.seq_id = next(Sequence.counter)
         self.status = SequenceStatus.WAITING
         self.token_ids = copy(token_ids)
@@ -34,7 +34,6 @@ class Sequence:
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
         self.return_timestamps = sampling_params.return_timestamps
-        self.timestamp_begin = timestamp_begin
         self.last_timestamp_id = None
         self.has_timestamp_start = False
 
@@ -99,14 +98,13 @@ class Sequence:
             self.block_table,
             self.token_ids if self.num_completion_tokens == 0 else self.last_token,
             self.return_timestamps,
-            self.timestamp_begin,
             self.last_timestamp_id,
             self.has_timestamp_start,
         )
 
     def __setstate__(self, state):
         (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.block_table,
-         tokens_or_last, self.return_timestamps, self.timestamp_begin, self.last_timestamp_id,
+         tokens_or_last, self.return_timestamps, self.last_timestamp_id,
          self.has_timestamp_start) = state
         if self.num_completion_tokens == 0:
             self.token_ids = tokens_or_last

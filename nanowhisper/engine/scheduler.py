@@ -11,6 +11,7 @@ class Scheduler:
         self.max_num_seqs = config.max_num_seqs
         self.max_num_batched_tokens = config.max_num_batched_tokens
         self.eos = config.eos
+        self.timestamp_begin = config.timestamp_begin
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
@@ -68,7 +69,7 @@ class Scheduler:
     def postprocess(self, seqs: list[Sequence], token_ids: list[int]) -> list[bool]:
         for seq, token_id in zip(seqs, token_ids):
             seq.append_token(token_id)
-            if seq.return_timestamps and seq.timestamp_begin is not None and token_id >= seq.timestamp_begin:
+            if seq.return_timestamps and token_id >= self.timestamp_begin:
                 seq.last_timestamp_id = token_id
                 if not seq.has_timestamp_start:
                     seq.has_timestamp_start = True

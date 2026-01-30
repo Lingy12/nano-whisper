@@ -82,7 +82,6 @@ class LLMEngine:
             prompt.get("prompt", None),
             sampling_params,
             input_tensors = prompt.get("multi_modal_data", None),
-            timestamp_begin = self.model_runner.config.timestamp_begin,
         )
         self._seq_params[seq.seq_id] = sampling_params
         self.scheduler.add(seq)
