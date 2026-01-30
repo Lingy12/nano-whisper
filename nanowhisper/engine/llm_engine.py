@@ -46,7 +46,10 @@ class LLMEngine:
         if no_timestamps_token_id is None or no_timestamps_token_id < 0:
             raise ValueError("Could not resolve <|notimestamps|> token id from tokenizer/config")
         config.no_timestamps_token_id = no_timestamps_token_id
-        config.timestamp_begin = config.no_timestamps_token_id + 1
+        ts_begin = self.tokenizer.convert_tokens_to_ids("<|0.00|>")
+        if ts_begin is None or ts_begin < 0:
+            ts_begin = config.no_timestamps_token_id + 1
+        config.timestamp_begin = ts_begin
         config.time_precision = getattr(self.tokenizer, "time_precision", 0.02)
         self.scheduler = Scheduler(config)
         self._seq_params = {}
@@ -95,39 +98,46 @@ class LLMEngine:
     def is_finished(self):
         return self.scheduler.is_finished()
 
-    def _get_timestamp_begin(self):
-        no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", None)
-        if no_timestamps_token_id is None:
-            try:
-                no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
-            except Exception:
-                no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", None)
-        return no_timestamps_token_id + 1
+    def find_timestamp_begin(self):
+        return self.tokenizer.convert_tokens_to_ids("<|0.00|>")
 
-    def _build_segments(self, token_ids: list[int]):
-        timestamp_begin = self._get_timestamp_begin()
-        time_precision = getattr(self.tokenizer, "time_precision", 0.02)
+    def parse_whisper_timestamp_segments(
+        self,
+        token_ids: list[int],
+        time_precision: float = 0.02,
+        ts_begin: int | None = None,
+        skip_special_tokens_in_text: bool = True,
+    ):
+        if ts_begin is None:
+            ts_begin = self.find_timestamp_begin()
+        def is_ts(tid: int):
+            return tid >= ts_begin
+        def ts_to_seconds(tid: int):
+            return (tid - ts_begin) * time_precision
         segments = []
         cur_start = None
         cur_text_tokens = []
+        full_text_tokens = []
         for tid in token_ids:
-            if tid >= timestamp_begin:
-                t = (tid - timestamp_begin) * time_precision
+            if is_ts(tid):
+                t = ts_to_seconds(tid)
                 if cur_start is None:
                     cur_start = t
                     cur_text_tokens = []
                 else:
-                    seg_text = self.tokenizer.decode(cur_text_tokens, skip_special_tokens=True).strip()
+                    cur_end = t
+                    seg_text = self.tokenizer.decode(cur_text_tokens, skip_special_tokens=skip_special_tokens_in_text).strip()
                     segments.append({
                         "start": float(cur_start),
-                        "end": float(t),
+                        "end": float(cur_end),
                         "text": seg_text,
                         "tokens": cur_text_tokens[:],
                     })
-                    cur_start = t
+                    cur_start = None
                     cur_text_tokens = []
             else:
                 cur_text_tokens.append(tid)
+                full_text_tokens.append(tid)
         return segments
 
     def generate(
@@ -164,12 +174,15 @@ class LLMEngine:
         outputs = [outputs[seq_id] for seq_id in ordered_seq_ids]
         decoded = []
         for seq_id, token_ids in zip(ordered_seq_ids, outputs):
-            result = {"text": self.tokenizer.decode(token_ids), "token_ids": token_ids}
             sp = self._seq_params.pop(seq_id, None)
             if sp and sp.return_timestamps:
-                segments = self._build_segments(token_ids)
-                result["segments"] = segments
-            decoded.append(result)
+                decoded.append({
+                    "text": self.tokenizer.decode(token_ids),
+                    "token_ids": token_ids,
+                    "segments": self.parse_whisper_timestamp_segments(token_ids, time_precision=self.model_runner.config.time_precision),
+                })
+            else:
+                decoded.append({"text": self.tokenizer.decode(token_ids), "token_ids": token_ids})
         if use_tqdm:
             pbar.close()
         return decoded

@@ -10,6 +10,8 @@ from nanowhisper.layers.sampler import Sampler
 from nanowhisper.utils.context import set_context, get_context, reset_context
 from nanowhisper.models.whisper import WhisperForConditionalGeneration
 from nanowhisper.utils.loader_whisper import load_model
+from nanowhisper.layers.whisper_timestamp_processor import WhisperTimestampLogitsProcessor
+from transformers import AutoTokenizer
 import gc
 
 class ModelRunner:
@@ -30,6 +32,9 @@ class ModelRunner:
         self.model = WhisperForConditionalGeneration(hf_config)
         load_model(self.model, config.model)
         self.sampler = Sampler()
+        self.timestamp_processor = WhisperTimestampLogitsProcessor(
+            AutoTokenizer.from_pretrained(config.model, use_fast=True)
+        )
         self.warmup_model()
         self.allocate_kv_cache()
         if not self.enforce_eager:
@@ -283,7 +288,7 @@ class ModelRunner:
         logits = self.run_model(input_ids, positions, is_prefill, input_tensors)
         # pr.disable()
         if self.rank == 0:
-            logits = self.apply_timestamp_processor(seqs, logits)
+            logits = self.timestamp_processor(logits, seqs, is_prefill)
             token_ids = self.sampler(logits, temperatures).tolist()
         else:
             token_ids = None
