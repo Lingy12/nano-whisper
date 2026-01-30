@@ -227,10 +227,12 @@ class ModelRunner:
 
     def _get_timestamp_params(self):
         no_timestamps_token_id = getattr(self.config, "no_timestamps_token_id", None)
-        if no_timestamps_token_id is None:
-            no_timestamps_token_id = getattr(self.config.hf_config, "no_timestamps_token_id", 50364)
+        if no_timestamps_token_id is None or no_timestamps_token_id < 0:
+            no_timestamps_token_id = getattr(self.config.hf_config, "no_timestamps_token_id", None)
+        if no_timestamps_token_id is None or no_timestamps_token_id < 0:
+            raise ValueError("no_timestamps_token_id not set; tokenizer must provide it")
         timestamp_begin = getattr(self.config, "timestamp_begin", None)
-        if timestamp_begin is None:
+        if timestamp_begin is None or timestamp_begin < 0:
             timestamp_begin = no_timestamps_token_id + 1
         max_initial_timestamp_index = getattr(self.config.hf_config, "max_initial_timestamp_index", 1)
         eos_token_id = self.config.eos if self.config.eos != -1 else getattr(self.config.hf_config, "eos_token_id", 50257)

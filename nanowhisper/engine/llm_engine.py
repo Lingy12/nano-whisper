@@ -31,10 +31,21 @@ class LLMEngine:
         self.model_runner = ModelRunner(config, 0, self.events)
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config.eos = self.tokenizer.eos_token_id
+        no_timestamps_token_id = None
         try:
-            config.no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
+            no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
         except Exception:
-            config.no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", 50364)
+            no_timestamps_token_id = None
+        if no_timestamps_token_id is None or no_timestamps_token_id < 0:
+            no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", None)
+        if no_timestamps_token_id is None or no_timestamps_token_id < 0:
+            no_timestamps_token_id = getattr(self.tokenizer, "get_vocab", lambda: {}).get("<|notimestamps|>")
+        if no_timestamps_token_id is None or no_timestamps_token_id < 0:
+            no_timestamps_token_id = getattr(self.tokenizer, "config", None)
+            no_timestamps_token_id = getattr(no_timestamps_token_id, "no_timestamps_token_id", None)
+        if no_timestamps_token_id is None or no_timestamps_token_id < 0:
+            raise ValueError("Could not resolve <|notimestamps|> token id from tokenizer/config")
+        config.no_timestamps_token_id = no_timestamps_token_id
         config.timestamp_begin = config.no_timestamps_token_id + 1
         config.time_precision = getattr(self.tokenizer, "time_precision", 0.02)
         self.scheduler = Scheduler(config)
@@ -55,12 +66,14 @@ class LLMEngine:
         else:
             if sampling_params.return_timestamps:
                 no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", None)
-                if no_timestamps_token_id is None:
+                if no_timestamps_token_id is None or no_timestamps_token_id < 0:
                     try:
                         no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
                     except Exception:
                         no_timestamps_token_id = None
-                if no_timestamps_token_id is not None:
+                if no_timestamps_token_id is None or no_timestamps_token_id < 0:
+                    no_timestamps_token_id = getattr(self.tokenizer, "get_vocab", lambda: {}).get("<|notimestamps|>")
+                if no_timestamps_token_id is not None and no_timestamps_token_id >= 0:
                     prompt["prompt"] = [t for t in prompt["prompt"] if t != no_timestamps_token_id]
         seq = Sequence(prompt.get("prompt", None), sampling_params, input_tensors = prompt.get("multi_modal_data", None))
         self._seq_params[seq.seq_id] = sampling_params
@@ -83,7 +96,7 @@ class LLMEngine:
             try:
                 no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
             except Exception:
-                no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", 50364)
+                no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", None)
         return no_timestamps_token_id + 1
 
     def _build_segments(self, token_ids: list[int]):
