@@ -34,7 +34,7 @@ class LLMEngine:
         try:
             config.no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
         except Exception:
-            config.no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", 50363)
+            config.no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", 50364)
         config.timestamp_begin = config.no_timestamps_token_id + 1
         config.time_precision = getattr(self.tokenizer, "time_precision", 0.02)
         self.scheduler = Scheduler(config)
@@ -83,7 +83,7 @@ class LLMEngine:
             try:
                 no_timestamps_token_id = self.tokenizer.convert_tokens_to_ids("<|notimestamps|>")
             except Exception:
-                no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", 50363)
+                no_timestamps_token_id = getattr(self.tokenizer, "no_timestamps_token_id", 50364)
         return no_timestamps_token_id + 1
 
     def _build_segments(self, token_ids: list[int]):

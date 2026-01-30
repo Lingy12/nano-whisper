@@ -228,7 +228,7 @@ class ModelRunner:
     def _get_timestamp_params(self):
         no_timestamps_token_id = getattr(self.config, "no_timestamps_token_id", None)
         if no_timestamps_token_id is None:
-            no_timestamps_token_id = getattr(self.config.hf_config, "no_timestamps_token_id", 50363)
+            no_timestamps_token_id = getattr(self.config.hf_config, "no_timestamps_token_id", 50364)
         timestamp_begin = getattr(self.config, "timestamp_begin", None)
         if timestamp_begin is None:
             timestamp_begin = no_timestamps_token_id + 1

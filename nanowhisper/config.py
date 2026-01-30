@@ -14,6 +14,9 @@ class Config:
     enforce_eager: bool = False
     hf_config: AutoConfig | None = None
     eos: int = -1
+    no_timestamps_token_id: int = -1
+    timestamp_begin: int = -1
+    time_precision: float = 0.02
     kvcache_block_size: int = 256
     num_kvcache_blocks: int = -1
 
