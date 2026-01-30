@@ -75,7 +75,12 @@ class LLMEngine:
                     no_timestamps_token_id = getattr(self.tokenizer, "get_vocab", lambda: {}).get("<|notimestamps|>")
                 if no_timestamps_token_id is not None and no_timestamps_token_id >= 0:
                     prompt["prompt"] = [t for t in prompt["prompt"] if t != no_timestamps_token_id]
-        seq = Sequence(prompt.get("prompt", None), sampling_params, input_tensors = prompt.get("multi_modal_data", None))
+        seq = Sequence(
+            prompt.get("prompt", None),
+            sampling_params,
+            input_tensors = prompt.get("multi_modal_data", None),
+            timestamp_begin = self.model_runner.config.timestamp_begin,
+        )
         self._seq_params[seq.seq_id] = sampling_params
         self.scheduler.add(seq)
 
@@ -103,20 +108,26 @@ class LLMEngine:
         timestamp_begin = self._get_timestamp_begin()
         time_precision = getattr(self.tokenizer, "time_precision", 0.02)
         segments = []
-        current_start = None
-        current_tokens = []
-        for token_id in token_ids:
-            if token_id >= timestamp_begin:
-                t = (token_id - timestamp_begin) * time_precision
-                if current_start is None:
-                    current_start = t
+        cur_start = None
+        cur_text_tokens = []
+        for tid in token_ids:
+            if tid >= timestamp_begin:
+                t = (tid - timestamp_begin) * time_precision
+                if cur_start is None:
+                    cur_start = t
+                    cur_text_tokens = []
                 else:
-                    text = self.tokenizer.decode(current_tokens, skip_special_tokens=True)
-                    segments.append({"start": float(current_start), "end": float(t), "text": text})
-                    current_start = t
-                    current_tokens = []
+                    seg_text = self.tokenizer.decode(cur_text_tokens, skip_special_tokens=True).strip()
+                    segments.append({
+                        "start": float(cur_start),
+                        "end": float(t),
+                        "text": seg_text,
+                        "tokens": cur_text_tokens[:],
+                    })
+                    cur_start = t
+                    cur_text_tokens = []
             else:
-                current_tokens.append(token_id)
+                cur_text_tokens.append(tid)
         return segments
 
     def generate(

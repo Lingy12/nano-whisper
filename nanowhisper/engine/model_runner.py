@@ -239,7 +239,7 @@ class ModelRunner:
         return no_timestamps_token_id, timestamp_begin, max_initial_timestamp_index, eos_token_id
 
     def apply_timestamp_processor(self, seqs: list[Sequence], scores: torch.Tensor) -> torch.Tensor:
-        no_timestamps_token_id, timestamp_begin, max_initial_timestamp_index, eos_token_id = self._get_timestamp_params()
+        no_timestamps_token_id, timestamp_begin, _, _ = self._get_timestamp_params()
         for k, seq in enumerate(seqs):
             # Always suppress the <|notimestamps|> token during generation
             scores[k, no_timestamps_token_id] = -float("inf")
@@ -247,40 +247,8 @@ class ModelRunner:
                 scores[k, timestamp_begin:] = -float("inf")
                 continue
 
-            begin_index = seq.num_prompt_tokens
-            sampled_tokens = seq.token_ids[begin_index:]
-            num_sampled = len(sampled_tokens)
-
-            last_was_timestamp = num_sampled >= 1 and sampled_tokens[-1] >= timestamp_begin
-            penultimate_was_timestamp = num_sampled < 2 or sampled_tokens[-2] >= timestamp_begin
-
-            if last_was_timestamp:
-                if penultimate_was_timestamp:  # has to be non-timestamp
-                    scores[k, timestamp_begin:] = -float("inf")
-                else:  # cannot be normal text tokens
-                    scores[k, : eos_token_id] = -float("inf")
-
-            timestamps = [t for t in sampled_tokens if t >= timestamp_begin]
-            if timestamps:
-                if last_was_timestamp and not penultimate_was_timestamp:
-                    timestamp_last = timestamps[-1]
-                else:
-                    # Avoid to emit <|0.00|> again
-                    timestamp_last = timestamps[-1] + 1
-                scores[k, timestamp_begin: timestamp_last] = -float("inf")
-
-            # apply the max_initial_timestamp option
-            if len(seq.token_ids) == begin_index:
-                scores[k, : timestamp_begin] = -float("inf")
-                if max_initial_timestamp_index is not None:
-                    last_allowed = timestamp_begin + max_initial_timestamp_index
-                    scores[k, last_allowed + 1 :] = -float("inf")
-
-            # if sum of probability over timestamps is above any other token, sample timestamp
-            timestamp_logit_sum = scores[k, timestamp_begin:].logsumexp(dim=-1)
-            max_text_token_logit = scores[k, :timestamp_begin].max()
-            if timestamp_logit_sum > max_text_token_logit:
-                scores[k, : timestamp_begin] = -float("inf")
+            if seq.last_timestamp_id is not None:
+                scores[k, timestamp_begin:seq.last_timestamp_id] = -float("inf")
         return scores
 
     @torch.inference_mode()
